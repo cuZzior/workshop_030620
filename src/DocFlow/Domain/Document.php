@@ -2,6 +2,9 @@
 
 namespace DocFlow\Domain;
 
+use DocFlow\Domain\User\Suffixed;
+use DocFlow\Domain\User\Uppercased;
+
 class Document
 {
     /**
@@ -32,12 +35,12 @@ class Document
     /**
      * @var string
      */
-    private $title;
+    private $title = "";
 
     /**
      * @var string
      */
-    private $content;
+    private $content = "";
 
     /**
      * @var User[]
@@ -55,7 +58,8 @@ class Document
         $this->type = $type;
         $this->author = $author;
         $this->status = DocumentStatus::DRAFT();
-        $this->number = $type . '/' . $clock->getDateTime()->format('Y/m/d');
+        $this->number = $type . '/' . $clock->getDateTime()->format('Y/m/d') . uniqid("", false);
+        $this->readers[] = $author;
     }
 
     public function verify(User $verifier): void
@@ -66,21 +70,31 @@ class Document
 
         $this->status = DocumentStatus::VERIFIED();
         $this->verifier = $verifier;
+        $this->readers[] = $verifier;
     }
 
-    public function publish(): void
+    public function publish(DocumentSigner $signer, EventPublisher $publisher): void
     {
+        if (!$this->status->equals(DocumentStatus::VERIFIED())) {
+            throw new \LogicException('...');
+        }
 
+        $signer->sign($this->author, $this->number);
+        $publisher->publish(new Event());
+
+        $this->status = DocumentStatus::PUBLISHED();
     }
 
     public function archive(): void
     {
-
+        $this->status = DocumentStatus::ARCHIVED();
     }
 
     public function addReader(User $reader)
     {
-
+        if (!$this->isOnReadersList($reader)) {
+            $this->readers[] = $reader;
+        }
     }
 
     public function changeContent(string $title, string $content): void
@@ -145,10 +159,37 @@ class Document
         return $this->author;
     }
 
+    public function getReaders(): array
+    {
+        $readers = [];
+
+        foreach ($this->readers as $reader) {
+            if ($reader->equals($this->author)) {
+                $readers[] = new Suffixed(new Uppercased($reader), 'author');
+            } elseif ($this->verifier && $reader->equals($this->verifier)) {
+                $readers[] = new Suffixed(new Uppercased($reader), 'verifier');
+            } else {
+                $readers[] = $reader;
+            }
+        }
+
+        return $readers;
+    }
+
     private function canBeVerified(Document $document, User $verifier)
     {
         return !empty($document->getTitle()) &&
             !$document->getAuthor()->equals($verifier) &&
             $document->getStatus()->equals(DocumentStatus::DRAFT()); // kolejne warunki
+    }
+
+    public function isOnReadersList(User $reader): bool
+    {
+        return in_array($reader, $this->readers);
+    }
+
+    public function getReadersCount(): int
+    {
+        return count($this->readers);
     }
 }
